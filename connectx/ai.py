@@ -1,48 +1,44 @@
-from typing import Callable, Tuple, List, Set
+from typing import Callable, Tuple, List
 
 from connectx.game import ConnectX
 
-DIRECTIONS = ((1,0), (0,-1), (0,1), (-1,0), (1,1), (-1, 1), (1, -1), (-1,-1))
+DIRECTIONS = ((1,0), (0,1), (1,1), (1,-1))
+SIGN_DIR = {'R': 1, 'Y': -1, None: 0}
 
-def compute_sequence(board: List[List[str]],
-                     color: str,
-                     start: Tuple[int, int],
-                     direction: Tuple[int, int],
-                     calculated_sequences: Set[Tuple[Tuple[int, int]]]
-                     ) -> int:
-        if (not (0 <= start[0] + 3 * direction[0] < len(board))) or (not (0 <= start[1] + 3 * direction[1] < len(board[0]))):
-            return 0
+def compute_sequence(board: List[List[str]], color: str, start: Tuple[int, int],
+                     direction: Tuple[int, int]) -> int:
         score = 0
-        loc = list(start)
-        this_seq = [start]
-        for i in range(1,4):
-            loc = [loc[0] + direction[0], loc[1] + direction[1]]
+        if (not (0 <= start[0] + 3*direction[0] < len(board)) or
+            (not (0 <= start[1] + 3*direction[1] < len(board[0])))):
+            return 0
+        for i in range(4):
+            loc = (start[0] + i*direction[0], start[1] + i*direction[1])
             if board[loc[0]][loc[1]] == color:
                 score += 1
-                this_seq.append((loc[0], loc[1]))
             elif board[loc[0]][loc[1]] is not None:
                 return 0
-        tuple_seq = tuple(this_seq)
-        if tuple_seq in calculated_sequences:
-            return 0
-        calculated_sequences.add(tuple_seq)
         return score**score
 
 
 def evaluate(g: ConnectX):
+    if g.is_terminal():
+        return 100000 if g.winner() == 'R' else -100000
     board = g.board
     value = 0
-    calculated_sequences = set()
     for row in range(len(board)):
         for col in range(len(board[row])):
-            if board[row][col] == 'R':
+            if board[row][col] is not None:
                 for direction in DIRECTIONS:
-                    value += compute_sequence(board, board[row][col], (row, col), direction, calculated_sequences)
-            elif board[row][col] == 'Y':
-                for direction in DIRECTIONS:
-                    value -= compute_sequence(board, board[row][col], (row, col), direction, calculated_sequences)
+                    sign = SIGN_DIR[board[row][col]]
+                    value +=  sign * compute_sequence(board,board[row][col],(row,col), direction)
     return value
 
+
+def block_win(g: ConnectX, move: int) -> bool:
+    new_game = g.clone()
+    new_game.player = 'R' if new_game.player == 'Y' else 'Y'
+    new_game.play(move)
+    return new_game.is_terminal()
 
 
 def minmax_min_component(game: ConnectX, depth: int, evaluator: Callable) -> Tuple[int, float]:
@@ -53,17 +49,25 @@ def minmax_min_component(game: ConnectX, depth: int, evaluator: Callable) -> Tup
     :param evaluator: heuristic function that estimates how good is a state
     :return: The move that gives the lowest score and the score
     """
+    if depth == 0:
+        return -1, evaluator(game)
     best_value = float('inf')
     best_play = None
+    block_move = None
     for move in game.legal_actions():
         new_game = game.clone()
         new_game.play(move)
-        if new_game.is_terminal() or depth == 1:
-            return move, evaluator(new_game)
+        if new_game.is_terminal():
+            return move, -100000
+        elif block_win(game, move):
+            block_move = move
+            continue
         else:
             play, value = minmax_max_component(new_game, depth - 1, evaluator)
         if value < best_value:
             best_play, best_value = move, value
+    if block_move is not None:
+        return block_move, -50000
     return best_play, best_value
 
 
@@ -75,17 +79,25 @@ def minmax_max_component(game: ConnectX, depth: int, evaluator: Callable) -> Tup
     :param evaluator: heuristic function that estimates how good is a state
     :return: The move that gives the highest score and the score
     """
+    if depth == 0:
+        return -1, evaluator(game)
     best_value = -float('inf')
     best_play = None
+    block_move = None
     for move in game.legal_actions():
         new_game = game.clone()
         new_game.play(move)
-        if new_game.is_terminal() or depth == 1:
-            return move, evaluator(new_game)
+        if new_game.is_terminal():
+            return move, 100000
+        elif block_win(game, move):
+            block_move = move
+            continue
         else:
             play, value = minmax_min_component(new_game, depth - 1, evaluator)
         if value > best_value:
             best_play, best_value = move, value
+    if block_move is not None:
+        return block_move, 50000
     return best_play, best_value
 
 
@@ -117,20 +129,28 @@ def alpha_beta_min_component(
     :param beta: lower bound of the search space
     :return: The move that gives the lowest score and the score
     """
+    if depth == 0:
+        return -1, evaluator(game)
     best_value = float('inf')
     best_play = None
+    block_move = None
     for move in game.legal_actions():
         new_game = game.clone()
         new_game.play(move)
-        if new_game.is_terminal() or depth == 1:
-            return move, evaluator(new_game)
+        if new_game.is_terminal():
+            return move, -100000
+        elif block_win(game, move):
+            block_move = move
+            continue
         else:
             play, value = alpha_beta_max_component(new_game, depth - 1, evaluator, alpha, beta)
         if value < best_value:
             best_play, best_value = move, value
             beta = min(beta, best_value)
-            if alpha > beta:
+            if alpha >= beta:
                 return best_play, best_value
+    if block_move is not None:
+        return block_move, -50000
     return best_play, best_value
 
 
@@ -145,20 +165,28 @@ def alpha_beta_max_component(game: ConnectX, depth: int, evaluator: Callable,
     :param beta: lower bound of the search space
     :return: The move that gives the highest score and the score
     """
+    if depth == 0:
+        return -1, evaluator(game)
     best_value = -float('inf')
     best_play = None
+    block_move = None
     for move in game.legal_actions():
         new_game = game.clone()
         new_game.play(move)
-        if new_game.is_terminal() or depth == 1:
-            return move, evaluator(new_game)
+        if new_game.is_terminal():
+            return move, 100000
+        elif block_win(game, move):
+            block_move = move
+            continue
         else:
             play, value = alpha_beta_min_component(new_game, depth - 1, evaluator, alpha, beta)
         if value > best_value:
             best_play, best_value = move, value
             alpha = max(alpha, best_value)
-            if alpha > beta:
+            if alpha >= beta:
                 return best_play, best_value
+    if block_move is not None:
+        return block_move, 50000
     return best_play, best_value
 
 
